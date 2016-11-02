@@ -1,0 +1,22 @@
+{
+	"kind": "Service",
+	"apiVersion": "v1",
+	"metadata": {
+		"name": "wordpress",
+		"labels": {
+			"app": "wordpress"
+		}
+	},
+	"spec": {
+		"ports": [
+			{
+				"port": 80
+			}
+		],
+		"selector": {
+			"app": "wordpress",
+			"tier": "frontend"
+		},
+		"type": "LoadBalancer"
+	}
+}

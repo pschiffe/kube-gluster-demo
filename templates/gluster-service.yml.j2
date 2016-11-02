@@ -1,0 +1,10 @@
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: gluster-service-{{ volume }}
+spec:
+  selector:
+    app: gluster-pod
+  ports:
+    - port:{{ volume_port }}

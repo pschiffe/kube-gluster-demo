@@ -1,0 +1,137 @@
+---
+- hosts: all
+  tasks:
+    - name: install ansible dnf dependency
+      command: /usr/bin/dnf -y install python2-dnf
+
+    - name: update all packages
+      package: name=* state=latest
+
+    - name: install requirements
+      package: name={{ item }} state=present
+      with_items:
+        - libselinux-python
+        - python-docker-py
+        - glusterfs-fuse
+
+    - name: disable selinux
+      selinux: policy=targeted state=permissive
+
+    - name: disable firewall
+      service: name=firewalld state=stopped enabled=no
+
+    - name: create required host dirs
+      file: path={{ item }} state=directory
+      with_items:
+        - /mnt/brick1
+        - /mnt/gluster
+
+- name: deploy kubernetes
+  include: /usr/share/kubernetes-ansible/playbooks/deploy-cluster.yml
+
+- hosts: nodes
+  tasks:
+    - name: pre-pull gluster image
+      docker_image: name=gluster/gluster-centos tag=gluster3u8_centos7 state=present
+
+- hosts: localhost
+  tasks:
+    - name: label first two nodes for gluster
+      command: /usr/bin/kubectl label --overwrite node {{ item.1 }} 'app=gluster-node' 'name=node{{ item.0 + 1 }}'
+      with_indexed_items:
+        - "{{ groups['nodes'][0] }}"
+        - "{{ groups['nodes'][1] }}"
+
+    - name: check if gluster pods are deployed
+      command: /usr/bin/kubectl get ds gluster
+      register: gluster_ds
+      ignore_errors: true
+
+    - name: deploy gluster pods
+      command: /usr/bin/kubectl create -f files/gluster.yml
+      when: gluster_ds|failed
+
+    - name: enable cockpit copr
+      command: /usr/bin/dnf -y copr enable @cockpit/cockpit-preview
+
+    - name: install cockpit
+      package: name={{ item }} state=present
+      with_items:
+        - cockpit
+        - cockpit-kubernetes
+
+    - name: enable cockpit
+      service: name=cockpit.socket state=started enabled=yes
+
+    - name: get node1 ip by label
+      command: /usr/bin/kubectl get node --selector=name=node1 -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
+      register: node1_ip
+
+    - name: get node2 ip by label
+      command: /usr/bin/kubectl get node --selector=name=node2 -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
+      register: node2_ip
+
+    - name: get name of pod running on this node
+      command: /usr/bin/docker ps -f ancestor=gluster/gluster-centos:gluster3u8_centos7 --format "'{{ '{{' }} .Label \"io.kubernetes.pod.name\" {{ '}}' }}'"
+      register: gluster_pod
+
+    - name: check if peer is connected
+      shell: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster peer status | grep {{ node2_ip.stdout }}
+      register: peer_status
+      ignore_errors: true
+
+    - name: configure gluster cluster
+      command: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster peer probe {{ node2_ip.stdout }}
+      when: peer_status|failed
+
+    - name: check if the first volume exists
+      shell: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster volume status vol1
+      register: vol1_status
+      ignore_errors: true
+
+    - name: check if the second volume exists
+      shell: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster volume status vol2
+      register: vol2_status
+      ignore_errors: true
+
+    - name: create vol1 gluster volume
+      command: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster volume {{ item }}
+      with_items:
+        - create vol1 replica 2 {{ node1_ip.stdout }}:/mnt/brick1/vol1 {{ node2_ip.stdout }}:/mnt/brick1/vol1
+        - start vol1
+      when: vol1_status|failed
+
+    - name: create vol2 gluster volume
+      command: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster volume {{ item }}
+      with_items:
+        - create vol2 replica 2 {{ node1_ip.stdout }}:/mnt/brick1/vol2 {{ node2_ip.stdout }}:/mnt/brick1/vol2
+        - start vol2
+      when: vol2_status|failed
+
+    - name: get port of the first volume
+      shell: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster volume status vol1 {{ node1_ip.stdout }}:/mnt/brick1/vol1 detail | grep TCP | cut -d ':' -f 2
+      register: vol1_port
+
+    - name: get port of the second volume
+      shell: /usr/bin/kubectl exec {{ gluster_pod.stdout }} gluster volume status vol2 {{ node1_ip.stdout }}:/mnt/brick1/vol2 detail | grep TCP | cut -d ':' -f 2
+      register: vol2_port
+
+    - name: deploy gluster service for vol1
+      vars:
+        volume: vol1
+        volume_port: "{{ vol1_port.stdout }}"
+      kubernetes:
+        api_endpoint: localhost:8080
+        insecure: true
+        state: present
+        inline_data: "{{ lookup('template', 'templates/gluster-service.yml.j2') }}"
+
+    - name: deploy gluster service for vol2
+      vars:
+        volume: vol2
+        volume_port: "{{ vol2_port.stdout }}"
+      kubernetes:
+        api_endpoint: localhost:8080
+        insecure: true
+        state: present
+        inline_data: "{{ lookup('template', 'templates/gluster-service.yml.j2') }}"

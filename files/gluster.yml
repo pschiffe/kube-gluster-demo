@@ -1,0 +1,50 @@
+---
+kind: DaemonSet
+apiVersion: extensions/v1beta1
+metadata:
+  labels:
+    app: gluster
+  name: gluster
+spec:
+  template:
+    metadata:
+      labels:
+        app: gluster-pod
+    spec:
+      nodeSelector:
+        app: gluster-node
+      containers:
+        - name: gluster
+          image: gluster/gluster-centos:gluster3u8_centos7
+          volumeMounts:
+            - name: var-glusterd
+              mountPath: "/var/lib/glusterd"
+            - name: brickpath
+              mountPath: "/mnt/brick1"
+            - name: rundir
+              mountPath: "/run"
+            - name: tmpdir
+              mountPath: "/tmp"
+            - name: cgroups
+              mountPath: "/sys/fs/cgroup"
+              readOnly: true
+          securityContext:
+            capabilities: {}
+            privileged: true
+      hostNetwork: true
+      volumes:
+        - name: var-glusterd
+          hostPath:
+            path: "/mnt/gluster/var"
+        - name: brickpath
+          hostPath:
+            path: "/mnt/brick1"
+        - name: rundir
+          emptyDir:
+            medium: "Memory"
+        - name: tmpdir
+          emptyDir:
+            medium: "Memory"
+        - name: cgroups
+          hostPath:
+            path: "/sys/fs/cgroup"

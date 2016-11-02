@@ -1,0 +1,12 @@
+kube-master     ansible_connection=local
+kube-node       ansible_user=root   ansible_ssh_pass=pass
+
+[masters]
+kube-master
+
+[etcd:children]
+masters
+
+[nodes]
+kube-master
+kube-node
