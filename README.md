@@ -8,10 +8,10 @@ You will need at least 2 virtual machines running recent Fedora (24+) with pytho
 
 ## Usage
 
-The deployment is inteded to by run from the master instance.
+The deployment is intended to by run from the master instance.
 
 ```
-dnf install git
+dnf install git ansible
 git clone https://github.com/pschiffe/kube-gluster-demo.git
 cd kube-gluster-demo
 vi inventory  # Edit inventory file to suit your needs
